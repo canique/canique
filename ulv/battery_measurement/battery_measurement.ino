@@ -19,9 +19,9 @@
  * mhz / prescaler must be between 50 and 200 kHz
  */
 #if F_CPU >= 8000000L
-#define BATTERY_VOLTAGE_PRESCALER ((1<<ADPS2)|(1<<ADPS1)|(1<<ADPS0)) //prescaler=128, used for >=8MHz
+#define BATTERY_VOLTAGE_PRESCALER ( _BV(ADPS2) | _BV(ADPS1) | _BV(ADPS0) ) //prescaler=128, used for >=8MHz
 #else
-#define BATTERY_VOLTAGE_PRESCALER ((1<<ADPS2)|(1<<ADPS1)|(1<<ADPS0)) //prescaler=64, used for 4MHz
+#define BATTERY_VOLTAGE_PRESCALER ( _BV(ADPS2) | _BV(ADPS1) ) //prescaler=64, used for 4MHz
 #endif
 
 
@@ -71,7 +71,7 @@ const uint16_t delayBeforeBattMeasureUs = 350;
  * DO NOT REMOVE!
  * interrupt routine
  * needed for reading battery voltage in low noise mode
- * this method is called whenever an analog reading has been made
+ * this method is called whenever an analog conversion has been done
  */
 ISR(ADC_vect) {
 }
@@ -86,23 +86,34 @@ void setup() {
 
   Serial.begin(115200);
   
-  /**
-   * use internal 1.1V reference voltage for measuring analog data like battery voltage
-   * this means that any voltage we measure must not exceed 1.1V
-   */
-  ADMUX |= (1<<MUX2) | (1<<MUX1) | (1<<MUX0) | (1<<REFS1) | (1<<REFS0); //use channel ADC7, 1.1 voltage reference
-  power_adc_disable(); //we turn off the analog to digital converter to save juice
+  setupAnalogConverter();
 }
 
+
+void setupAnalogConverter() {
+  /**
+   * use ADC7
+   * use internal 1.1V reference voltage for measuring analog data like battery voltage
+   * this means that any voltage we measure must not exceed 1.1V
+   * Atmel ATmega328/P [DATASHEET] Atmel-42735B-ATmega328/P_Datasheet_Complete-11/2016, page 317
+   */
+  ADMUX |= _BV(MUX2) | _BV(MUX1) | _BV(MUX0) | _BV(REFS1) | _BV(REFS0); //use channel ADC7, 1.1 voltage reference
+  power_adc_disable(); //we turn off the analog to digital converter to save juice
+
+  //according to https://meettechniek.info/embedded/arduino-analog.html it takes more than 5ms for the reference voltage to build up
+  //that's why we put a 10ms delay here
+  delay(10);
+}
 
 
 /**
  * Reads a voltage from 0 to 1.1V on pin A7 by making multiple measurements and taking the average 
  * then calculates the original voltage before the resistor dividider that is connected to A7
  * 
- * returns measured voltage (before the resistor divider) in millivolts
+ * returns measured voltage (before the resistor divider) in millivolts, will return 0 
+ * if noise reduction mode was disturbed by some interrupt during each measurement
  */
-uint16_t getBatteryVoltage()
+uint16_t getBatteryVoltage(byte numSamples)
 {
   digitalWrite(BATTREAD_ENABLE_PIN, HIGH); //activate measurement
 
@@ -112,24 +123,48 @@ uint16_t getBatteryVoltage()
    * we will read a voltage between 0 and 1.1V
    */
   int voltagesADC = 0;
-  const int numSamples = 10;
+  byte numValidSamples = 0;
 
   power_adc_enable(); //activate analog to digital converter
-  ADCSRA |= (1<<ADEN) | (1<<ADIE) | BATTERY_VOLTAGE_PRESCALER;
+
+  /**
+   * Atmel ATmega328/P [DATASHEET] Atmel-42735B-ATmega328/P_Datasheet_Complete-11/2016, page 319
+   * enable analog digital converter
+   * enable ADC interrupts
+   * set prescaler
+   */
+  ADCSRA |= _BV(ADEN) | _BV(ADIE) | BATTERY_VOLTAGE_PRESCALER;
 
   //measure "numSamples" times
   for (byte i=0; i<numSamples; i++)
   {
-    LowPower.adcNoiseReduction(SLEEP_15MS, ADC_ON, TIMER2_OFF); //TODO if you use timer2 meanwhile don't shut it down and leave TIMER2_ON!
+    //TODO if you use timer2 meanwhile don't shut it down and leave TIMER2_ON but note that it 
+    //might trigger interrupts disturbing the noise reduction mode!
+    LowPower.adcNoiseReduction(SLEEP_15MS, ADC_ON, TIMER2_OFF);
+
+    /**
+     * if we exit from the noise reduction sleep mode, we should have a reading in ADC, but it might be that we exited too early because of
+     * some other interrupt (e.g. pin change or timer2... see page 63 of Atmega328P documentation)
+     * that's why we check if we have a reading...(ADSC will be 0 if we have a reading)
+     */
+    if ( (ADCSRA & _BV(ADSC)) != 0) //skip reading analog voltage if we got interrupted too early
+    {
+      continue;
+    }
 
     voltagesADC += ADC; //read value from analog input (between 0-1023 where 1023 would mean 1.1V)
+    numValidSamples++;
   }
 
   power_adc_disable(); //deactivate analog to digital converter
   digitalWrite(BATTREAD_ENABLE_PIN, LOW); //deactivate measurement
 
-
-  float avgVoltageADC = voltagesADC / (float)numSamples; //calculate average from measurements
+  if (numValidSamples == 0)
+  {
+    return 0;
+  }
+  
+  float avgVoltageADC = voltagesADC / (float)numValidSamples; //calculate average from measurements
 
   /**
    * calculate battery voltage based on resistor divider
@@ -141,7 +176,7 @@ uint16_t getBatteryVoltage()
 
 
 void loop() {
-  uint16_t voltage = getBatteryVoltage();
+  uint16_t voltage = getBatteryVoltage(10); //take the average of 10 samples
   
   Serial.print("Canique ULV Board battery voltage: ");
   Serial.print(voltage);

@@ -71,6 +71,7 @@ const uint16_t delayBeforeBattMeasureUs = 350;
  * DO NOT REMOVE!
  * interrupt routine
  * needed for reading battery voltage in low noise mode
+ * this method is called whenever an analog reading has been made
  */
 ISR(ADC_vect) {
 }

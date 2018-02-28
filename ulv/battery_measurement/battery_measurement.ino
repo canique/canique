@@ -108,10 +108,6 @@ void setupRadio()
   radio.setHighPower(true);
   #endif
   
-  //-1 dBm draws 16mA power (=powerlevels up to 17)
-  //0 dBm draws 20mA power
-  //13 dBm draws 45mA power
-  //-18dBm + 5 dBm = -13 dBm
   radio.setPowerLevel(0); //0=minimum, 31=maximum TODO 15?
 
   //sleep right from the start

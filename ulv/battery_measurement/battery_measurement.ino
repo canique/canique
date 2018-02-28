@@ -5,14 +5,15 @@
  * 
  */
 
+#include <RFM69.h>
 #include <LowPower.h>
 #include <avr/power.h>
 
 #define LED_PIN 9
 #define BATTREAD_ENABLE_PIN 4
 
-#define ULV_MAX_MEASURE_VOLTAGE_3V3 //uncomment this if your ULV board can measure up to 3.3V
-//#define ULV_MAX_MEASURE_VOLTAGE_1V8 //TODO uncomment this if your ULV board can measure up to 1.8V
+//#define ULV_MAX_MEASURE_VOLTAGE_3V3 //uncomment this if your ULV board can measure up to 3.3V
+#define ULV_MAX_MEASURE_VOLTAGE_1V8 //TODO uncomment this if your ULV board can measure up to 1.8V
 
 /**
  * set prescaler for analog measurement depending on clock frequency
@@ -24,7 +25,12 @@
 #define BATTERY_VOLTAGE_PRESCALER ( _BV(ADPS2) | _BV(ADPS1) ) //prescaler=64, used for 4MHz
 #endif
 
+#define NODEID        0  //must be unique for each node on same network (range up to 254, 255 is used for broadcast)
+#define NETWORKID     10  //the same on all nodes that talk to each other (range up to 255)
+#define GATEWAYID     1
 
+#define FREQUENCY   RF69_433MHZ
+#define RADIO_HIGH_POWER   1 //comment out if using RFM69W
 
 /**
  * The variable VOLTAGE_CORRECTION can be used to calibrate the reading with a multimeter.
@@ -67,6 +73,8 @@ const float VOLTAGE_MULTIPLIER = VOLTAGE_CORRECTION * (1680.0/1000.0); //if your
  */
 const uint16_t delayBeforeBattMeasureUs = 350;
 
+RFM69 radio;
+
 /**
  * DO NOT REMOVE!
  * interrupt routine
@@ -81,12 +89,40 @@ void setup() {
   //run @ 16MHz (not necessarily needed)
   clock_prescale_set(clock_div_1);
 
+  setupRadio();
+
   pinMode(LED_PIN, OUTPUT);
   pinMode(BATTREAD_ENABLE_PIN, OUTPUT);
 
   Serial.begin(115200);
   
   setupAnalogConverter();
+}
+
+
+void setupRadio()
+{
+  radio.initialize(FREQUENCY, NODEID, NETWORKID);
+
+  #ifdef RADIO_HIGH_POWER
+  radio.setHighPower(true);
+  #endif
+  
+  //-1 dBm draws 16mA power (=powerlevels up to 17)
+  //0 dBm draws 20mA power
+  //13 dBm draws 45mA power
+  //-18dBm + 5 dBm = -13 dBm
+  radio.setPowerLevel(0); //0=minimum, 31=maximum TODO 15?
+
+  //sleep right from the start
+  radio.sleep();
+}
+
+
+void turnOffADC()
+{
+  ADCSRA &= ~_BV(ADEN); //turn off ADC enable bit
+  power_adc_disable(); //we turn off the analog to digital converter to save juice
 }
 
 
@@ -98,7 +134,7 @@ void setupAnalogConverter() {
    * Atmel ATmega328/P [DATASHEET] Atmel-42735B-ATmega328/P_Datasheet_Complete-11/2016, page 317
    */
   ADMUX |= _BV(MUX2) | _BV(MUX1) | _BV(MUX0) | _BV(REFS1) | _BV(REFS0); //use channel ADC7, 1.1 voltage reference
-  power_adc_disable(); //we turn off the analog to digital converter to save juice
+  turnOffADC();
 
   //according to https://meettechniek.info/embedded/arduino-analog.html it takes more than 5ms for the reference voltage to build up
   //that's why we put a 10ms delay here
@@ -156,7 +192,7 @@ uint16_t getBatteryVoltage(byte numSamples)
     numValidSamples++;
   }
 
-  power_adc_disable(); //deactivate analog to digital converter
+  turnOffADC(); //deactivate analog to digital converter
   digitalWrite(BATTREAD_ENABLE_PIN, LOW); //deactivate measurement
 
   if (numValidSamples == 0)
@@ -182,5 +218,11 @@ void loop() {
   Serial.print(voltage);
   Serial.println(" mv");
 
-  LowPower.powerDown(SLEEP_2S, ADC_OFF, BOD_OFF);
+  /**
+   * we switched ADC off anyway in getBatteryVoltage() so it is off now
+   * that's why we leave ADC untouched (=ADC_ON, that does not change anything)
+   * if we used ADC_OFF here, on next wakeup ADC would be on again, @see rocketscream code
+   */
+  LowPower.powerDown(SLEEP_8S, ADC_ON, BOD_OFF);
+  //LowPower.powerDown(SLEEP_8S, ADC_ON, BOD_OFF);
 }

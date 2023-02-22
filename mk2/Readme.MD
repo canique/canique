@@ -1,6 +1,7 @@
 # Canique MK2 Schematics
 
-These are schematics for Canique MK2 rev4 based on https://github.com/LowPowerLab/Moteino/tree/master/R4 from Felix Rusu. The RFM69 has additional capacitors on the back of the board, the trace routing is different, the FTDI connector circumvents the voltage regulator.
+These are schematics for Canique MK2 rev4 based on https://github.com/LowPowerLab/Moteino/tree/master/R4 from Felix Rusu.
+Some noteable changes on the MK2 board are: The RFM69 has additional capacitors on the back of the board, the trace routing is different, the FTDI connector circumvents the voltage regulator.
 
 
 # License
